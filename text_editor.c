@@ -31,9 +31,12 @@ void displayTextBuffer() {
 // Create the SQLite database and table if not already existing
 int createDatabase(sqlite3 *db) {
     const char *sql = "CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, content TEXT);";
-    int rc = sqlite3_exec(db, sql, 0, 0, NULL);
+    char *errMsg = 0;
+
+    int rc = sqlite3_exec(db, sql, 0, 0, &errMsg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
+        fprintf(stderr, "SQL error: %s\n", errMsg);
+        sqlite3_free(errMsg);
         return rc;
     }
     return SQLITE_OK;
@@ -41,13 +44,13 @@ int createDatabase(sqlite3 *db) {
 
 // Save the content to the SQLite database
 int saveToDatabase(sqlite3 *db, int id, const char *content) {
-    char *errMsg = 0;
-    const char *sql = "INSERT INTO documents (id, content) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET content=excluded.content;";
+    const char *sql = "INSERT INTO documents (id, content) VALUES (?, ?) "
+                      "ON CONFLICT(id) DO UPDATE SET content=excluded.content;";
     sqlite3_stmt *stmt;
 
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to prepare statement\n");
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
         return rc;
     }
 
@@ -70,7 +73,7 @@ char *loadFromDatabase(sqlite3 *db, int id) {
 
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to prepare statement\n");
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
         return NULL;
     }
 
@@ -94,7 +97,7 @@ int getNewDocumentId(sqlite3 *db) {
 
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to prepare statement\n");
+        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db));
         return -1;
     }
 
@@ -137,11 +140,11 @@ int main(int argc, char *argv[]) {
         if (content) {
             // Load content into text buffer
             int row = 0, col = 0;
-            for (int i = 0; i < strlen(content); i++) {
+            for (int i = 0; i < strlen(content) && row < MAX_ROWS; i++) {
                 if (content[i] == '\n') {
                     row++;
                     col = 0;
-                } else {
+                } else if (col < MAX_COLS) {
                     text[row][col++] = content[i];
                 }
             }
@@ -180,17 +183,29 @@ int main(int argc, char *argv[]) {
                 if (x < MAX_COLS - 1) x++;
                 break;
             case 10: // Enter key
-                y++;
-                x = 0;
+                if (y < MAX_ROWS - 1) {
+                    y++;
+                    x = 0;
+                }
                 break;
-            case 127: // Backspace key
+            case 127: // Backspace key (127 is the ASCII code for backspace)
+            case KEY_BACKSPACE: // Handle both backspace and delete keys
                 if (x > 0) {
                     x--;
+                    text[y][x] = ' ';
+                } else if (y > 0) {
+                    y--;
+                    x = MAX_COLS - 1;
+                    while (x > 0 && text[y][x] == ' ') {
+                        x--;
+                    }
                     text[y][x] = ' ';
                 }
                 break;
             default:
-                text[y][x++] = ch;
+                if (x < MAX_COLS) {
+                    text[y][x++] = ch;
+                }
                 break;
         }
         clear();
